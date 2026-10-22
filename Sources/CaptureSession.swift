@@ -1,6 +1,17 @@
 import Combine
 import Foundation
 
+enum CaptureSource: String {
+  case dom, accessibility, screenshot
+  var label: String {
+    switch self {
+    case .dom: return "DOM"
+    case .accessibility: return "macOS 辅助功能"
+    case .screenshot: return "区域截图"
+    }
+  }
+}
+
 struct ExecutionWorld: Identifiable, Equatable {
   let sessionID: String
   let contextID: Int
@@ -24,6 +35,20 @@ struct SelectedElement: Identifiable {
   var name: String { snapshot["name"] as? String ?? "未命名元素" }
   var tag: String { snapshot["tag"] as? String ?? "element" }
   var selector: String { snapshot["selector"] as? String ?? "" }
+  var source: CaptureSource {
+    CaptureSource(rawValue: snapshot["captureSource"] as? String ?? "dom") ?? .dom
+  }
+  var kindLabel: String { source == .dom ? "<\(tag)>" : source == .screenshot ? "截图区域" : tag }
+  var imagePNG: Data? {
+    (snapshot["imagePNGBase64"] as? String).flatMap { Data(base64Encoded: $0) }
+  }
+}
+
+struct CaptureArchive: Identifiable {
+  let id = UUID()
+  let applicationName: String
+  let capturedAt = Date()
+  var elements: [SelectedElement]
 }
 
 @MainActor
@@ -40,6 +65,9 @@ final class CaptureSession: ObservableObject {
   @Published var error: String?
   @Published var worlds: [String: ExecutionWorld] = [:]
   @Published var elements: [SelectedElement] = []
+  @Published private(set) var archives: [CaptureArchive] = []
+  @Published var reviewingArchiveID: UUID?
+  @Published var applicationName = "手动连接"
   @Published var focusedID: String?
   @Published var frameWarnings: [String] = []
   @Published var shortcutWarning: String?
@@ -59,6 +87,44 @@ final class CaptureSession: ObservableObject {
   var onPickModeChanged: ((Bool) -> Void)?
 
   init(source: String) { self.source = source }
+
+  var reviewingArchive: CaptureArchive? {
+    archives.first { $0.id == reviewingArchiveID }
+  }
+  var displayedElements: [SelectedElement] { reviewingArchive?.elements ?? elements }
+  var displayedApplicationName: String { reviewingArchive?.applicationName ?? applicationName }
+
+  func showCurrentCapture() {
+    reviewingArchiveID = nil
+    focusedID = elements.first?.id
+  }
+
+  func reviewArchive(_ id: UUID) {
+    guard let archive = archives.first(where: { $0.id == id }) else { return }
+    reviewingArchiveID = id
+    focusedID = archive.elements.first?.id
+  }
+
+  func archiveCurrentCapture() {
+    if !elements.isEmpty {
+      var saved = elements
+      for i in saved.indices { saved[i].stale = true }
+      archives.insert(CaptureArchive(applicationName: applicationName, elements: saved), at: 0)
+      elements = []
+      selectionRevision += 1
+    }
+    showCurrentCapture()
+  }
+
+  func addNativeCapture(_ snapshot: [String: Any], windowTitle: String) {
+    let id = UUID().uuidString
+    let world = ExecutionWorld(sessionID: "native", contextID: 0, uniqueID: id, frameID: "")
+    reviewingArchiveID = nil
+    elements.append(SelectedElement(id: id, world: world, frameURL: "", frameTitle: "",
+      capturedFramePath: [], windowTitle: windowTitle, windowURL: "", snapshot: snapshot))
+    focusedID = id
+    status = "已采集 \(elements.count) 项 · 来源：\(elements.last!.source.label)"
+  }
 
   func discoverWebKit(_ endpoint: WebKitEndpoint) async throws {
     await disconnect()
@@ -103,6 +169,7 @@ final class CaptureSession: ObservableObject {
     busy = true
     defer { busy = false }
     _ = try? await webkit.request("detach")
+    archiveCurrentCapture()
     for world in Array(worlds.values) { removeWorld(world) }
     frames = [:]; picking = false; connected = false
     selectedTarget = target
@@ -169,6 +236,7 @@ final class CaptureSession: ObservableObject {
     busy = true
     defer { busy = false }
     await disconnect()
+    archiveCurrentCapture()
     error = nil
     frameWarnings = []
     let currentGeneration = generation
@@ -423,6 +491,7 @@ final class CaptureSession: ObservableObject {
         return
       }
       let additive = message["additive"] as? Bool ?? false
+      reviewingArchiveID = nil
       let oldNote = elements.first(where: { $0.id == id })?.note ?? ""
       if !additive { elements = [] }
       if let index = elements.firstIndex(where: { $0.id == id }) {
@@ -475,18 +544,40 @@ final class CaptureSession: ObservableObject {
   }
 
   func clear() {
+    if let id = reviewingArchiveID {
+      archives.removeAll { $0.id == id }
+      showCurrentCapture()
+      return
+    }
     elements = []
     focusedID = nil
     selectionRevision += 1
     Task { await syncSelection() }
   }
   func remove(_ id: String) {
+    if let archiveID = reviewingArchiveID,
+      let index = archives.firstIndex(where: { $0.id == archiveID }) {
+      archives[index].elements.removeAll { $0.id == id }
+      if archives[index].elements.isEmpty {
+        archives.remove(at: index)
+        showCurrentCapture()
+      } else if focusedID == id {
+        focusedID = archives[index].elements.first?.id
+      }
+      return
+    }
     elements.removeAll { $0.id == id }
     if focusedID == id { focusedID = elements.first?.id }
     selectionRevision += 1
     Task { await syncSelection() }
   }
   func note(_ id: String, _ text: String) {
+    if let archiveID = reviewingArchiveID,
+      let index = archives.firstIndex(where: { $0.id == archiveID }),
+      let elementIndex = archives[index].elements.firstIndex(where: { $0.id == id }) {
+      archives[index].elements[elementIndex].note = text
+      return
+    }
     if let i = elements.firstIndex(where: { $0.id == id }) { elements[i].note = text }
   }
   func navigate(_ element: SelectedElement, direction: String) async {
@@ -549,10 +640,11 @@ final class CaptureSession: ObservableObject {
     sessions = []
     scripts = [:]
     frames = [:]
+    frameWarnings = []
     rootSession = nil
     connected = false
     selectedTarget = nil
-    for i in elements.indices { elements[i].stale = true }
+    for i in elements.indices where elements[i].source == .dom { elements[i].stale = true }
   }
 
   func framePath(_ id: String) -> [String] {
@@ -577,16 +669,26 @@ final class CaptureSession: ObservableObject {
   }
 
   func exportJSON() -> Data {
+    let exported = displayedElements
     let body: [String: Any] = [
       "schemaVersion": 1, "tool": "DomScan",
       "capturedAt": ISO8601DateFormatter().string(from: Date()),
-      "target": ["title": selectedTarget?.title ?? "已断开的窗口", "url": selectedTarget?.url ?? ""],
-      "elements": elements.map { e in
-        [
-          "window": ["title": e.windowTitle, "url": e.windowURL], "frameID": e.world.frameID,
-          "frameURL": e.frameURL, "framePath": e.capturedFramePath, "instruction": e.note,
+      "application": displayedApplicationName,
+      "archived": reviewingArchive != nil,
+      "target": ["title": exported.first?.windowTitle ?? selectedTarget?.title ?? "已断开的窗口",
+        "url": exported.first?.windowURL ?? selectedTarget?.url ?? ""],
+      "elements": exported.map { e in
+        var entry: [String: Any] = [
+          "window": ["title": e.windowTitle, "url": e.windowURL], "instruction": e.note,
           "stale": e.stale, "element": e.snapshot,
-        ] as [String: Any]
+          "source": e.source.rawValue,
+        ]
+        if e.source == .dom {
+          entry["frameID"] = e.world.frameID
+          entry["frameURL"] = e.frameURL
+          entry["framePath"] = e.capturedFramePath
+        }
+        return entry
       },
     ]
     return
@@ -595,20 +697,38 @@ final class CaptureSession: ObservableObject {
       ?? Data()
   }
 
-  func exportMarkdown() -> String {
+  func exportMarkdown(includeImages: Bool = true) -> String {
     var lines = [
       "# DomScan", "",
-      "Window: \(selectedTarget?.title ?? elements.first?.windowTitle ?? "未接入窗口")",
-      "Source: DOM · no screenshot inference", "",
+      "Application: \(displayedApplicationName)",
+      "Window: \(displayedElements.first?.windowTitle ?? selectedTarget?.title ?? "未接入窗口")",
+      "Source: \(Set(displayedElements.map { $0.source.label }).sorted().joined(separator: " / "))", "",
     ]
-    for (i, e) in elements.enumerated() {
+    if reviewingArchive != nil { lines += ["State: archived capture", ""] }
+    for (i, e) in displayedElements.enumerated() {
       lines += [
-        "## \(i+1). <\(e.tag)> \(e.name)", "", "Window: \(e.windowTitle)",
-        "Frame URL: \(e.frameURL)", "Frame ID: \(e.world.frameID)",
-        "Frame path: \(e.capturedFramePath.joined(separator:" → "))", "Selector: \(e.selector)",
+        "## \(i+1). \(e.kindLabel) \(e.name)", "", "Source: \(e.source.label)", "Window: \(e.windowTitle)",
       ]
+      if e.source == .dom {
+        lines += ["Frame URL: \(e.frameURL)", "Frame ID: \(e.world.frameID)",
+          "Frame path: \(e.capturedFramePath.joined(separator:" → "))", "Selector: \(e.selector)"]
+      } else { lines += ["Location description: \(e.selector)"] }
       if e.stale { lines.append("State: stale — captured element is no longer available") }
       if !e.note.isEmpty { lines += ["", "Instruction:", e.note] }
+      if e.source != .dom {
+        lines += ["", "Geometry (global screen points, top-left origin):",
+          Self.fenced(Self.jsonString(e.snapshot["bounds"] ?? [:]), language: "json")]
+        if let attributes = e.snapshot["attributes"] {
+          lines += ["", "Accessibility metadata:", Self.fenced(Self.jsonString(attributes), language: "json")]
+        }
+        if let image = e.snapshot["imagePNGBase64"] as? String {
+          lines += includeImages
+            ? ["", "![Captured region](data:image/png;base64,\(image))"]
+            : ["", "[PNG 图像包含在复制内容、Markdown 与 JSON 导出中；可在详情中单独导出 PNG]"]
+        }
+        lines += ["", "Limitations: \(e.snapshot["limitations"] as? String ?? "")", ""]
+        continue
+      }
       lines += [
         "", "Text:", Self.fenced(e.snapshot["text"] as? String ?? "", language: "text"), "",
         "Geometry (CSS pixels, relative to this frame):",

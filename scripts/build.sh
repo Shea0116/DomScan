@@ -9,7 +9,7 @@ rtk proxy xcrun swiftc -swift-version 5 -O -parse-as-library \
   -module-cache-path "$MODULE_CACHE" \
   -target "$(rtk proxy uname -m)-apple-macosx14.0" \
   "$PROJECT_DIR/Sources/CDP.swift" "$PROJECT_DIR/Sources/CaptureSession.swift" "$PROJECT_DIR/Sources/DomScanApp.swift" \
-  "$PROJECT_DIR/Sources/ApplicationConnector.swift" "$PROJECT_DIR/Sources/DesktopWindowPicker.swift" "$PROJECT_DIR/Sources/ConnectionSidebar.swift" \
+  "$PROJECT_DIR/Sources/ApplicationConnector.swift" "$PROJECT_DIR/Sources/NativeCapture.swift" "$PROJECT_DIR/Sources/DesktopWindowPicker.swift" "$PROJECT_DIR/Sources/ConnectionSidebar.swift" \
   "$PROJECT_DIR/Sources/WebKitConnection.swift" "$PROJECT_DIR/Bridge/Sources/DomScanBridge/BridgeWire.swift" \
   -o "$APP_DIR/Contents/MacOS/DomScan"
 rtk proxy cp "$PROJECT_DIR/Resources/picker.js" "$APP_DIR/Contents/Resources/picker.js"
@@ -17,6 +17,7 @@ rtk proxy cp "$PROJECT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 rtk proxy cp "$PROJECT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 rtk proxy cp "$PROJECT_DIR/Resources/BrandMark.png" "$APP_DIR/Contents/Resources/BrandMark.png"
 rtk proxy cp "$PROJECT_DIR/Docs/WKWebView.md" "$APP_DIR/Contents/Resources/WKWebView.md"
+rtk proxy cp "$PROJECT_DIR/Docs/NativeCapture.md" "$APP_DIR/Contents/Resources/NativeCapture.md"
 rtk proxy mkdir -p "$APP_DIR/Contents/Resources/DomScanBridge"
 rtk proxy cp -R "$PROJECT_DIR/Bridge/Package.swift" "$PROJECT_DIR/Bridge/Sources" "$APP_DIR/Contents/Resources/DomScanBridge/"
 rtk proxy codesign --force --sign - "$APP_DIR"

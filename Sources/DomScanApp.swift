@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
   @objc func togglePicking() {
     if connector.cancelWindowPickingIfActive() { return }
-    guard !store.busy else { return }
+    guard !store.busy, !connector.busy else { return }
     guard store.connected else {
       connector.pickWindow()
       return
@@ -105,10 +105,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   @objc func pickWindow() { connector.pickWindow() }
   @objc func cancelWindowPicking() { connector.cancelWindowPickingIfActive() }
   @objc func copyElements() {
-    guard !store.elements.isEmpty else { return }
+    guard !store.displayedElements.isEmpty else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(store.exportMarkdown(), forType: .string)
-    store.status = "已复制 \(store.elements.count) 个元素的上下文"
+    store.status = "已复制 \(store.displayedElements.count) 个元素的上下文"
   }
   @objc func quit() { NSApp.terminate(nil) }
   private func installHotKey() {
@@ -194,11 +194,19 @@ struct MainView: View {
   @ObservedObject var store: CaptureSession
   @ObservedObject var connector: ApplicationConnector
   @State private var tab = "详情"
+  @State private var showHistory = false
   var body: some View {
     VStack(spacing: 0) {
       header
       if let warning = store.shortcutWarning {
         Text(warning).font(.system(size: 11)).foregroundStyle(.orange).padding(8)
+      }
+      if let error = store.error {
+        HStack(alignment: .top) {
+          Label(error, systemImage: "exclamationmark.circle").textSelection(.enabled)
+          Spacer()
+          Button("关闭提示") { store.error = nil }.buttonStyle(.plain)
+        }.font(.system(size: 11)).foregroundStyle(.orange).padding(10)
       }
       Divider().opacity(0.5)
       HStack(spacing: 0) {
@@ -228,7 +236,7 @@ struct MainView: View {
       Spacer()
       HStack(spacing: 6) {
         Circle().fill(store.connected ? Theme.mint : .gray).frame(width: 6, height: 6)
-        Text(store.connected ? "已接入" : "未连接").font(.system(size: 11))
+        Text(connector.connectionLabel).font(.system(size: 11))
       }
       .padding(.horizontal, 11).padding(.vertical, 7).background(Theme.raised, in: Capsule())
       Button {
@@ -246,7 +254,7 @@ struct MainView: View {
         .padding(.horizontal, 8).padding(.vertical, 5)
       }.buttonStyle(.borderedProminent).disabled(!store.connected || store.busy || connector.busy)
         .help(
-          "⇧⌘Z · 全局开始或暂停")
+          store.connected ? "⇧⌘Z · 全局开始或暂停" : "窗口选中后还需连接 HTML 接口，连接成功才能拾取")
     }.padding(.horizontal, 25).padding(.vertical, 17).background(Theme.panel)
   }
   private var sidebar: some View {
@@ -255,24 +263,42 @@ struct MainView: View {
   private var selectionList: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
-        sectionLabel("02", "已选元素")
+        sectionLabel("02", store.reviewingArchive == nil ? "当前采集" : "上次采集")
         Spacer()
-        Text("\(store.elements.count)").font(.system(size: 11, design: .monospaced))
+        Text("\(store.displayedElements.count)").font(.system(size: 11, design: .monospaced))
           .foregroundStyle(Theme.mint)
       }.padding(20)
-      if store.elements.isEmpty {
+      VStack(alignment: .leading, spacing: 7) {
+        if let archive = store.reviewingArchive {
+          Label("历史记录 · \(archive.applicationName)", systemImage: "clock.arrow.circlepath")
+            .foregroundStyle(.orange)
+          Button("返回当前目标") { store.showCurrentCapture() }
+        } else {
+          Text(connector.selectedApplication?.name
+            ?? (connector.state == .idle && !store.connected ? "尚未选择目标" : store.applicationName))
+            .foregroundStyle(.secondary)
+          if !store.connected { Text("HTML 未连接").foregroundStyle(.secondary) }
+        }
+        if connector.selectedApplication?.processID != nil {
+          Menu("其他采集方式") {
+            Button("点选原生控件（辅助功能）") { connector.captureNative(region: false) }
+            Button("框选截图区域") { connector.captureNative(region: true) }
+          }.disabled(connector.busy || store.busy || connector.selectingWindow)
+        }
+      }.font(.system(size: 11)).padding(.horizontal, 20).padding(.bottom, 14)
+      if store.displayedElements.isEmpty {
         VStack(spacing: 14) {
           Image(systemName: "cursorarrow.and.square.on.square.dashed").font(
             .system(size: 38, weight: .ultraLight)
           ).foregroundStyle(Theme.accent.opacity(0.6))
-          Text("从一个真实元素开始").font(.system(size: 13, weight: .medium))
-          Text("点选屏幕窗口，或从左侧选择应用\n连接后按 ⇧⌘Z 拾取元素").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text(store.connected ? "从一个真实元素开始" : "选择采集方式开始").font(.system(size: 13, weight: .medium))
+          Text(store.connected ? "按 ⇧⌘Z 拾取 DOM 元素\n其他采集方式可读取原生控件或截图" : "连接 HTML 后可拾取 DOM\n也可选择原生控件采集或区域截图").font(.system(size: 11)).foregroundStyle(.secondary)
             .multilineTextAlignment(.center).lineSpacing(5)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         ScrollView {
           LazyVStack(spacing: 9) {
-            ForEach(Array(store.elements.enumerated()), id: \.element.id) { index, element in
+            ForEach(Array(store.displayedElements.enumerated()), id: \.element.id) { index, element in
               Button {
                 store.focusedID = element.id
               } label: {
@@ -281,7 +307,7 @@ struct MainView: View {
                     Text(String(format: "%02d", index + 1)).font(
                       .system(size: 10, design: .monospaced)
                     ).foregroundStyle(.secondary)
-                    Text("<\(element.tag)>").font(
+                    Text(element.kindLabel).font(
                       .system(size: 11, weight: .medium, design: .monospaced)
                     ).foregroundStyle(Theme.mint)
                     Spacer()
@@ -294,7 +320,7 @@ struct MainView: View {
                     .foregroundStyle(.secondary).lineLimit(2)
                   HStack(spacing: 5) {
                     Image(systemName: "rectangle.inset.filled")
-                    Text(URL(string: element.frameURL)?.host ?? "local frame").lineLimit(1)
+                    Text(element.source == .dom ? URL(string: element.frameURL)?.host ?? "local frame" : element.source.label).lineLimit(1)
                     Spacer()
                     if !element.note.isEmpty {
                       Image(systemName: "text.bubble.fill").foregroundStyle(Theme.accent)
@@ -314,15 +340,44 @@ struct MainView: View {
           }.padding(.horizontal, 17).padding(.bottom, 15)
         }
       }
+      if !store.archives.isEmpty {
+        Divider().opacity(0.4)
+        DisclosureGroup(isExpanded: $showHistory) {
+          ScrollView {
+            VStack(spacing: 7) {
+              ForEach(store.archives) { archive in
+                Button {
+                  store.reviewArchive(archive.id)
+                } label: {
+                  VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                      Text(archive.applicationName).fontWeight(.medium)
+                      Spacer()
+                      Text("\(archive.elements.count) 个元素")
+                    }
+                    Text(archive.elements.first?.windowTitle ?? "未命名窗口").lineLimit(1)
+                    Text(archive.capturedAt, style: .time).foregroundStyle(.secondary)
+                  }.font(.system(size: 10)).padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(store.reviewingArchiveID == archive.id
+                      ? Theme.accent.opacity(0.15) : Theme.panel, in: RoundedRectangle(cornerRadius: 7))
+                }.buttonStyle(.plain)
+              }
+            }
+          }.frame(maxHeight: 145)
+        } label: {
+          Text("上次采集 · \(store.archives.count) 组记录").font(.system(size: 11))
+        }.padding(17)
+      }
       Divider().opacity(0.4)
       HStack {
-        Button("清空") { store.clear() }.disabled(store.elements.isEmpty)
+        Button(store.reviewingArchive == nil ? "清空" : "删除这组记录") { store.clear() }
+          .disabled(store.displayedElements.isEmpty)
         Spacer()
         Button {
           Task { await store.refresh() }
         } label: {
           Label("更新", systemImage: "arrow.clockwise")
-        }.disabled(!store.connected || store.elements.isEmpty)
+        }.disabled(!store.connected || !store.elements.contains(where: { $0.source == .dom }) || store.reviewingArchive != nil)
       }.font(.system(size: 11)).padding(17)
     }
   }
@@ -336,56 +391,22 @@ struct MainView: View {
           Text("导出预览").tag("导出预览")
         }.pickerStyle(.segmented).frame(width: 155)
       }.padding(20)
-      if tab == "导出预览" {
+      if let archive = store.reviewingArchive {
+        Label("上次采集 · \(archive.applicationName) · 静态记录", systemImage: "clock.arrow.circlepath")
+          .font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 23).padding(.bottom, 15)
+      }
+      if tab == "导出预览" && !store.displayedElements.isEmpty {
         ScrollView {
-          Text(store.exportMarkdown()).font(.system(size: 11, design: .monospaced)).textSelection(
+          Text(store.exportMarkdown(includeImages: false)).font(.system(size: 11, design: .monospaced)).textSelection(
             .enabled
           ).frame(maxWidth: .infinity, alignment: .leading).padding(20)
         }
-      } else if let element = store.elements.first(where: { $0.id == store.focusedID })
-        ?? store.elements.first
+      } else if let element = store.displayedElements.first(where: { $0.id == store.focusedID })
+        ?? store.displayedElements.first
       {
         ElementInspector(store: store, element: element)
-      } else if connector.state == .needsRestart {
-        VStack(alignment: .leading, spacing: 18) {
-          Label("需要准备检查入口", systemImage: "macwindow.badge.plus")
-            .font(.system(size: 23, weight: .medium)).foregroundStyle(Theme.accent)
-          Text(connector.message).font(.system(size: 13)).lineSpacing(6)
-          Button("打开独立检查实例") {
-            Task { await connector.openInspectionInstance() }
-          }.buttonStyle(.borderedProminent).disabled(connector.busy)
-          Text("在新实例中操作和拾取元素。原窗口继续运行；两者的网页登录状态可能不同。")
-            .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5)
-          Button("重新打开原应用并连接…") { connector.requestRestart() }
-            .disabled(connector.busy)
-        }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      } else if connector.state == .searching || connector.state == .launching {
-        VStack(alignment: .leading, spacing: 18) {
-          ProgressView().controlSize(.large)
-          Text(connector.message).font(.system(size: 14)).lineSpacing(6)
-        }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      } else if connector.state == .ready && !store.connected {
-        VStack(alignment: .leading, spacing: 18) {
-          Label(store.isWebKit && store.error != nil ? "等待 WKWebView 页面" : "选择前端窗口", systemImage: "macwindow")
-            .font(.system(size: 23, weight: .medium)).foregroundStyle(Theme.accent)
-          Text(store.isWebKit && store.error != nil ? store.error! : "请从左侧“选择前端窗口”中选择需要检查的界面。")
-            .font(.system(size: 13)).lineSpacing(6)
-          Text("窗口列表会自动更新。")
-            .font(.system(size: 12)).foregroundStyle(.secondary)
-        }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      } else if connector.state == .unsupported || connector.state == .failed {
-        VStack(alignment: .leading, spacing: 18) {
-          Label("尚未接入 HTML", systemImage: "exclamationmark.circle")
-            .font(.system(size: 23, weight: .medium)).foregroundStyle(.orange)
-          Text(connector.message).font(.system(size: 13)).lineSpacing(6).textSelection(.enabled)
-          Text("请点选其他应用窗口，或从左侧选择应用。")
-            .font(.system(size: 12)).foregroundStyle(.secondary)
-          Button("WKWebView / Flutter 接入说明") {
-            if let url = Bundle.main.url(forResource: "WKWebView", withExtension: "md") {
-              NSWorkspace.shared.open(url)
-            }
-          }
-        }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      } else if !store.connected && (connector.selectedApplication != nil || connector.state != .idle) {
+        connectionGuidance
       } else {
         emptyInspector
       }
@@ -403,8 +424,31 @@ struct MainView: View {
         } label: {
           Label("复制上下文", systemImage: "doc.on.doc").padding(.horizontal, 7).padding(.vertical, 3)
         }.buttonStyle(.borderedProminent)
-      }.disabled(store.elements.isEmpty).padding(17)
+      }.disabled(store.displayedElements.isEmpty).padding(17)
     }
+  }
+  private var connectionGuidance: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 18) {
+        if connector.busy { ProgressView().controlSize(.large) }
+        Label(connector.connectionLabel, systemImage: "macwindow")
+          .font(.system(size: 21, weight: .medium)).foregroundStyle(Theme.accent)
+        if let app = connector.selectedApplication {
+          Text(app.name).font(.system(size: 15, weight: .medium))
+        }
+        Text(connector.guidanceMessage).font(.system(size: 13)).lineSpacing(6).textSelection(.enabled)
+        ConnectionActions(store: store, connector: connector)
+        if connector.selectedApplication?.processID != nil {
+          Divider().padding(.vertical, 4)
+          NativeCaptureActions(store: store, connector: connector)
+        }
+        ConnectionDiagnosticsView(store: store, connector: connector)
+        if connector.state == .unsupported {
+          Text("可以选择其他应用窗口。若目标已开放本机调试接口，也可通过左侧“高级连接”手动接入。")
+            .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(5)
+        }
+      }.padding(30).frame(maxWidth: .infinity, alignment: .leading)
+    }.frame(maxHeight: .infinity)
   }
   private var emptyInspector: some View {
     VStack(alignment: .leading, spacing: 23) {
@@ -506,7 +550,7 @@ struct ElementInspector: View {
       VStack(alignment: .leading, spacing: 21) {
         HStack(alignment: .top) {
           VStack(alignment: .leading, spacing: 8) {
-            Text("<\(element.tag)>").font(.system(size: 12, design: .monospaced)).foregroundStyle(
+            Text(element.kindLabel).font(.system(size: 12, design: .monospaced)).foregroundStyle(
               Theme.mint)
             Text(element.name).font(.system(size: 20, weight: .medium)).lineLimit(3)
           }
@@ -518,27 +562,49 @@ struct ElementInspector: View {
           }.buttonStyle(.plain).foregroundStyle(.secondary)
         }
         if element.stale {
-          Label("页面已更新或连接已关闭，请重新选择以获取最新信息。", systemImage: "exclamationmark.circle").font(
+          Label(store.reviewingArchive != nil
+            ? "这是之前采集的静态记录，仍可编辑备注并导出上下文。"
+            : "页面已更新或连接已关闭，请重新选择以获取最新信息。", systemImage: "exclamationmark.circle").font(
             .system(size: 11)
           ).foregroundStyle(.orange)
         }
-        HStack(spacing: 6) {
-          nav("父级", direction: "parent", icon: "arrow.up")
-          nav("子级", direction: "child", icon: "arrow.down")
-          nav("上一个", direction: "previous", icon: "arrow.left")
-          nav("下一个", direction: "next", icon: "arrow.right")
-        }.disabled(element.stale || !store.connected)
+        if element.source == .dom {
+          HStack(spacing: 6) {
+            nav("父级", direction: "parent", icon: "arrow.up")
+            nav("子级", direction: "child", icon: "arrow.down")
+            nav("上一个", direction: "previous", icon: "arrow.left")
+            nav("下一个", direction: "next", icon: "arrow.right")
+          }.disabled(element.stale || !store.connected)
+        }
         VStack(alignment: .leading, spacing: 9) {
           Text("你想修改什么？").font(.system(size: 12, weight: .semibold))
           TextEditor(
             text: Binding(
-              get: { store.elements.first(where: { $0.id == element.id })?.note ?? "" },
+              get: { store.displayedElements.first(where: { $0.id == element.id })?.note ?? "" },
               set: { store.note(element.id, $0) })
           ).font(.system(size: 12)).scrollContentBackground(.hidden).padding(9).frame(height: 85)
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8))
         }
-        block("元素定位", text: element.selector)
-        block("Frame", text: element.frameURL + "\n" + element.world.frameID)
+        Label("来源：\(element.source.label)", systemImage: element.source == .screenshot ? "photo" : "info.circle")
+          .font(.system(size: 11)).foregroundStyle(Theme.mint)
+        if element.source != .dom {
+          Text(element.snapshot["limitations"] as? String ?? "").font(.system(size: 11))
+            .foregroundStyle(.secondary).lineSpacing(4)
+        }
+        if let data = element.imagePNG, let image = NSImage(data: data) {
+          Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 280)
+          Button("导出 PNG 图像") { exportPNG(data) }
+        }
+        block(element.source == .dom ? "元素定位" : "采集位置描述", text: element.selector)
+        if element.source == .dom { block("Frame", text: element.frameURL + "\n" + element.world.frameID) }
+        else {
+          block("窗口", text: element.windowTitle)
+          Text("坐标：全局屏幕逻辑点，原点位于主屏幕左上角")
+            .font(.system(size: 10)).foregroundStyle(.secondary)
+          if let attributes = element.snapshot["attributes"] as? [String: String] {
+            block("辅助功能元数据", text: attributes.keys.sorted().map { "\($0): \(attributes[$0]!)" }.joined(separator: "\n"))
+          }
+        }
         if let rect = element.snapshot["bounds"] as? [String: Any] {
           HStack(spacing: 20) {
             metric("宽", rect["width"])
@@ -552,9 +618,17 @@ struct ElementInspector: View {
           block(
             "计算样式", text: css.keys.sorted().map { "\($0): \(css[$0]!);" }.joined(separator: "\n"))
         }
-        block("HTML", text: element.snapshot["html"] as? String ?? "")
+        if element.source == .dom { block("HTML", text: element.snapshot["html"] as? String ?? "") }
       }.padding(.horizontal, 23).padding(.bottom, 25)
     }.id(element.id)
+  }
+  private func exportPNG(_ data: Data) {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "capture-region.png"
+    panel.allowedContentTypes = [.png]
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do { try data.write(to: url, options: .atomic) }
+    catch { store.error = "PNG 导出失败：\(error.localizedDescription)" }
   }
   private func nav(_ title: String, direction: String, icon: String) -> some View {
     Button {

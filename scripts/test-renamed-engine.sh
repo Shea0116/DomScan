@@ -5,7 +5,7 @@ VERIFY_DIR="${1:-$(rtk proxy mktemp -d /private/tmp/ds-report.XXXXXX)}"
 MODULE_CACHE="${SELECTOR_MODULE_CACHE_DIR:-${TMPDIR:-/tmp}/desktop-selector-module-cache}"
 rtk proxy mkdir -p "$VERIFY_DIR" "$MODULE_CACHE"
 COMMON=("$PROJECT_DIR/Sources/CDP.swift" "$PROJECT_DIR/Sources/CaptureSession.swift" "$PROJECT_DIR/Sources/WebKitConnection.swift" "$PROJECT_DIR/Bridge/Sources/DomScanBridge/BridgeWire.swift")
-ENTRY=("$PROJECT_DIR/Sources/ApplicationConnector.swift" "$PROJECT_DIR/Sources/DesktopWindowPicker.swift")
+ENTRY=("$PROJECT_DIR/Sources/ApplicationConnector.swift" "$PROJECT_DIR/Sources/NativeCapture.swift" "$PROJECT_DIR/Sources/DesktopWindowPicker.swift")
 rtk proxy xcrun swiftc -swift-version 5 -parse-as-library -module-cache-path "$MODULE_CACHE" \
   "${COMMON[@]}" "${ENTRY[@]}" "$PROJECT_DIR/Tests/EngineEntryIntegration.swift" -o "$VERIFY_DIR/engine-entry-test"
 rtk proxy xcrun swiftc -swift-version 5 -parse-as-library -module-cache-path "$MODULE_CACHE" \

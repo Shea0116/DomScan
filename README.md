@@ -4,9 +4,9 @@
 
 **指向界面，读懂 DOM。**
 
-macOS 桌面前端元素选择器。可视化选择 Electron / Chromium，以及已接入 DomScanBridge 的 WKWebView 应用窗口，读取真实 HTML、计算样式和 iframe 上下文，添加修改说明后交给 AI 或用于本地开发排查。
+macOS 桌面前端元素选择器。可视化选择 Electron / Chromium，以及已接入 DomScanBridge 的 WKWebView 应用窗口，读取真实 HTML、计算样式和 iframe 上下文，添加修改说明后交给 AI 或用于本地开发排查。没有 HTML 接口的界面可使用 macOS 辅助功能控件采集或区域截图，结果会明确标注来源。
 
-当前版本：**0.4.0** · macOS 14+ · 交付安装包为 Apple Silicon。
+当前版本：**0.5.0** · macOS 14+ · 交付安装包为 Apple Silicon。
 
 ## 功能
 
@@ -19,6 +19,9 @@ macOS 桌面前端元素选择器。可视化选择 Electron / Chromium，以及
 - 逐元素备注，复制 Markdown 上下文，导出 Markdown / JSON。
 - Esc 暂停拾取并恢复正常点击和输入；连接意外丢失后自动释放拾取事件。
 - 应用启动时等待实际 HTML 页面，窗口列表自动刷新。
+- 连接诊断：展示识别应用、发现接口、获取页面、接入拾取四个阶段，可复制引擎、端口和协议检查结果。
+- 原生控件点选：读取辅助功能名称、角色、标识符及屏幕坐标，不读取输入框当前值。
+- 区域截图：在选定窗口内拖动框选，支持 PNG 预览、单独保存及带图像的 Markdown / JSON 导出。
 - WKWebView 开发桥接：原生 Swift 显式接入，或自动观察 Flutter macOS 的窗口视图树；只在 Debug 构建启用。
 
 ## 下载与使用
@@ -27,15 +30,23 @@ macOS 桌面前端元素选择器。可视化选择 Electron / Chromium，以及
 
 当前构建使用临时签名，尚未进行 Developer ID 公证。
 
-1. 选择应用或点击 **“点选窗口”**。
-2. 已开放检查接口时直接连接；否则点击 **“打开独立检查实例”**。在新实例中操作和拾取，网页登录状态可能不同。
+1. 选择应用或点击 **“点选窗口”**。应用列表默认显示检测到引擎或桥接线索的应用；切换 **“全部应用”** 可查看其余应用，“接入待确认”不代表不支持。
+2. **“窗口已选中”** 只表示目标已确定；显示 **“HTML 已连接”** 后才能拾取。Chromium 未开放接口时，可点击 **“打开独立检查实例”**，新实例的网页登录状态可能不同。未发现接口的其他应用会展示接入说明；暂时性连接失败时可重试。
 3. 应用包含多个前端窗口时，先从左侧选择目标窗口。
 4. 点击 **“开始拾取”** 或按 **⇧⌘Z**，回到目标应用点击元素；按住 Shift 可多选。
 5. 按 **Esc** 暂停，再回到 DomScan 填写备注并复制上下文。
 
+切换应用、前端窗口或重新连接时，已有元素会按来源应用收进 **“上次采集”**，默认展示当前目标及其连接提示。展开历史记录可编辑备注、复制或导出该组上下文，来源不会跟随当前应用改变；**“返回当前目标”** 可退出历史查看。历史记录仅保留在当前运行会话内，退出前请导出需要保存的内容。
+
 窗口选择层可用 Esc、右键或“取消选择”退出，30 秒未选择会自动退出。常用流程无需填写端口。
 
 若需接入原工作窗口，请先保存内容，再选择 **“重新打开原应用并连接…”**。部分 Chromium 发行版不允许在默认网页配置中开放调试接口，这时可使用独立实例。
+
+## 连接诊断与原生采集
+
+连接提示区会展示四阶段诊断。已连接时也可从 **“高级连接 → 连接诊断”** 查看最近一次尝试并复制诊断信息。报告包含应用、引擎、进程、端口和阶段结果，不包含页面 URL、启动参数、采集内容及桥接凭据。
+
+从当前采集区的 **“其他采集方式”** 可以选择 **“点选原生控件（辅助功能）”** 或 **“框选截图区域”**，不依赖 HTML 连接。首次使用需要在系统设置中允许 DomScan 的辅助功能或屏幕录制权限。原生元数据、截图和 DOM 会分别标注来源，不会将截图推断为 HTML 或 CSS。详见 [原生采集与权限说明](Docs/NativeCapture.md)。
 
 ## 本地桌面项目
 
@@ -48,10 +59,10 @@ DomScan 捕获的是运行时 DOM。复制的 HTML、属性、文本和 frame �
 ## 范围与数据
 
 - 接入层包括 **Chromium / Electron CDP** 和 **WKWebView 开发桥接**。未接入桥接的第三方 WKWebView 应用、纯原生控件和 Flutter 原生控件无法读取 HTML；当前没有 Tauri 专用接入适配器。仅开启 Safari 的 `isInspectable` 不足以连接 DomScan。
-- 仅连接本机地址；不使用截图或 OCR 推断元素。
+- HTML 接口仅连接本机地址；DOM 直接来自运行时。区域截图单独标注来源，不通过截图或 OCR 生成 HTML / CSS。
 - iframe 必须属于可接入目标；支持开放 Shadow DOM，不保证读取关闭 Shadow DOM、Canvas / WebGL 内部内容。
-- 元素尺寸使用 frame 内 CSS 像素坐标。CDP 导出包含 frame 祖先路径；WKWebView 公开 API 不提供完整祖先树，导出仅包含当前 frame 的 UUID 和 URL，并在界面提示此限制。
-- 导出为采集时的静态上下文：HTML 最多 16,000 字符，文本最多 2,400 字符。输入框当前值不作为采集字段。
+- DOM 尺寸使用 frame 内 CSS 像素坐标；辅助功能与截图使用全局屏幕逻辑点（主屏幕左上角为原点）。CDP 导出包含 frame 祖先路径；WKWebView 公开 API 不提供完整祖先树，导出仅包含当前 frame 的 UUID 和 URL，并在界面提示此限制。
+- 导出为采集时的静态上下文：HTML 最多 16,000 字符，文本最多 2,400 字符。DOM 与辅助功能模式不读取输入框当前值；区域截图包含框选范围内可见的画面信息。
 - 采集结果保存在内存中，由用户复制或保存。应用不内置 AI 上传接口。
 - 独立实例使用单独的 Chromium 网页配置，不复制原窗口的 Cookie 或历史；应用自行管理的原生配置、钥匙串或 CLI 登录状态仍可能共用。
 - 新配置位于 `~/Library/Application Support/DomScan/Inspection Profiles/`。升级时可继续使用旧版 Desktop Selector 的已有配置，避免移动运行中的应用文件。
@@ -85,6 +96,8 @@ rtk proxy xcrun swift scripts/make-icon.swift .
 - `Tests/Integration.swift`：真实 DOM、CSS、跨进程 / 嵌套 / 动态 iframe、选择事件隔离、Esc 后输入恢复及掉线释放。
 - `Tests/EngineEntryIntegration.swift`：改名框架识别、空白启动页处理、按 PID 连接和窗口元数据刷新。
 - `Tests/InspectionLaunchIntegration.swift`：独立实例启动、保留原实例及重复连接复用。
+- `Tests/ConnectionUXIntegration.swift`：连接状态与操作引导、诊断内容边界、切换目标归档、三种来源的备注、图像及导出隔离。运行 `rtk proxy zsh scripts/test-connection-ux.sh`。
+- `Tests/NativeCaptureIntegration.swift`：跨屏与反向框选坐标、辅助功能和屏幕录制权限不足的处理；系统已授权时检查真实 AppKit 控件及 ScreenCaptureKit 图像。运行 `rtk proxy zsh scripts/test-native.sh`。未授权时会明确输出真实采集检查的 `SKIP`，测试不会自行更改系统权限。
 - `Tests/PickerLifecycle.swift`：选择层焦点、超时、重复取消和失焦清理。
 - `Tests/VSCodeFixture/`：隔离 VS Code 开发窗口中的真实桌面 WebView 测试扩展。
 - `Tests/WKWebViewIntegration.swift`：真实 WebKit DOM、跨域 / 嵌套 / 动态 frame、独立脚本世界、鉴权、导航、Esc、断线及重新连接。
@@ -123,6 +136,7 @@ Sources/
   DomScanApp.swift           SwiftUI 界面、菜单栏与快捷键
   ApplicationConnector.swift 应用发现、独立实例与重启接入
   DesktopWindowPicker.swift  系统窗口点选与取消
+  NativeCapture.swift        辅助功能元数据与 ScreenCaptureKit 区域截图
   CDP.swift                  本机端点、WebSocket、CDP 消息
   WebKitConnection.swift     WKWebView 端点发现、鉴权与通信
   CaptureSession.swift       frame 生命周期、选择、备注及导出
@@ -139,6 +153,8 @@ Tests/                       测试宿主与集成检查
 ```
 
 ## 版本
+
+**0.5.0**：区分窗口选择与 HTML 连接、按接入线索筛选应用、按失败原因提供操作、按来源归档历史采集；新增四阶段连接诊断、macOS 辅助功能控件点选与区域截图，三种来源独立标注并支持备注和导出。
 
 **0.4.0**：加入 WKWebView Debug 桥接、Flutter 窗口视图自动发现、跨域和嵌套 frame 拾取；全局快捷键改为 ⇧⌘Z。
 

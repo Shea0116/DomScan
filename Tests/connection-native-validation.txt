@@ -1,0 +1,27 @@
+DomScan v0.5.0 validation
+Date: 2026-10-22
+Host: macOS, Apple Silicon
+
+PASS app build and ad-hoc signature verification
+PASS 23 connection UX, diagnostics, history and native export checks
+PASS real Chromium automatic endpoint discovery and target matching
+PASS real Chromium DOM, CSS, input isolation, iframe and disconnect regression
+PASS independent inspection instance launch and reuse
+PASS 21 real WKWebView bridge, DOM, iframe, navigation and reconnect checks
+PASS 7 picker focus, Escape registration, timeout, cancellation and cleanup checks
+PASS reverse drag and negative display coordinates stay within the selected window
+PASS missing accessibility permission returns a clear error without reading controls
+PASS missing screen recording permission prevents screenshot access with a clear error
+SKIP real accessibility metadata: test host has no system accessibility permission
+SKIP real screenshot pixels: test host has no system screen recording permission
+
+Native UI verified in a separately identified preview app:
+PASS selected window and HTML connection remain distinct
+PASS missing HTML interface identifies discovery as the failing diagnostic stage
+PASS copy diagnostics, native-control selection and screenshot-region entry points are visible
+PASS original running DomScan instance and its connection are preserved
+
+Native exports explicitly label accessibility or screenshot provenance, omit DOM/CSS/frame
+fields, preserve notes and archived PNG bytes, and distinguish screen points from CSS pixels.
+The test suite does not grant or alter macOS privacy permissions. Positive native capture
+checks run only when those permissions have been granted by the user.

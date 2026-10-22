@@ -1,6 +1,16 @@
 import AppKit
 import Carbon
 
+struct DesktopSelection {
+  let window: DesktopWindow
+  let point: CGPoint
+  let region: CGRect?
+  static func clippedRegion(from start: CGPoint, to end: CGPoint, within window: CGRect) -> CGRect {
+    CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+      width: abs(end.x - start.x), height: abs(end.y - start.y)).intersection(window)
+  }
+}
+
 @MainActor
 final class DesktopWindowPicker {
   private var panels: [NSPanel] = []
@@ -10,14 +20,24 @@ final class DesktopWindowPicker {
   private var escapeHotKey: EventHotKeyRef?
   private var escapeHandler: EventHandlerRef?
   private var expiryTimer: Timer?
-  private var completion: ((DesktopWindow?) -> Void)?
+  private var completion: ((DesktopSelection?) -> Void)?
   private(set) var escapeHotKeyRegistered = false
   var isActive: Bool { completion != nil }
 
   func start(timeout: TimeInterval = 30, completion: @escaping (DesktopWindow?) -> Void) {
+    startSelection(timeout: timeout, processID: nil, region: false) { completion($0?.window) }
+  }
+
+  func startElement(processID: pid_t, region: Bool, timeout: TimeInterval = 30,
+    completion: @escaping (DesktopSelection?) -> Void) {
+    startSelection(timeout: timeout, processID: processID, region: region, completion: completion)
+  }
+
+  private func startSelection(timeout: TimeInterval, processID: pid_t?, region: Bool,
+    completion: @escaping (DesktopSelection?) -> Void) {
     guard !isActive else { return }
     self.completion = completion
-    let windows = DesktopApplication.windowsOnScreen()
+    let windows = DesktopApplication.windowsOnScreen().filter { processID == nil || $0.processID == processID }
     guard !windows.isEmpty else {
       finish(nil)
       return
@@ -30,7 +50,7 @@ final class DesktopWindowPicker {
     for screen in NSScreen.screens {
       let panel = PickingPanel(
         contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-      panel.title = "选择应用窗口 · 第 1 步"
+      panel.title = processID == nil ? "选择应用窗口 · 第 1 步" : region ? "框选截图区域" : "点选原生控件"
       panel.level = .screenSaver
       panel.isOpaque = false
       panel.isReleasedWhenClosed = false
@@ -43,7 +63,7 @@ final class DesktopWindowPicker {
       let origin = CGPoint(x: screen.frame.minX, y: primaryTop - screen.frame.maxY)
       let view = WindowPickingView(
         frame: CGRect(origin: .zero, size: screen.frame.size), windows: windows,
-        screenOrigin: origin, primaryTop: primaryTop)
+        screenOrigin: origin, primaryTop: primaryTop, elementMode: processID != nil, regionMode: region)
       view.remainingSeconds = max(1, Int(ceil(timeout)))
       view.choose = { [weak self] chosen in
         DispatchQueue.main.async { self?.finish(chosen) }
@@ -125,7 +145,7 @@ final class DesktopWindowPicker {
 
   func cancel() { finish(nil) }
 
-  private func finish(_ window: DesktopWindow?) {
+  private func finish(_ window: DesktopSelection?) {
     guard let callback = completion else { return }
     completion = nil
     expiryTimer?.invalidate()
@@ -173,7 +193,12 @@ private final class WindowPickingView: NSView {
   let windows: [DesktopWindow]
   let screenOrigin: CGPoint
   let primaryTop: CGFloat
-  var choose: ((DesktopWindow?) -> Void)?
+  var choose: ((DesktopSelection?) -> Void)?
+  let elementMode: Bool
+  let regionMode: Bool
+  private var dragStart: CGPoint?
+  private var dragWindow: DesktopWindow?
+  private var dragRect: CGRect?
   var remainingSeconds = 30 { didSet { if oldValue != remainingSeconds { needsDisplay = true } } }
   private var hovered: DesktopWindow?
   private var tracking: NSTrackingArea?
@@ -182,7 +207,10 @@ private final class WindowPickingView: NSView {
   override var needsPanelToBecomeKey: Bool { true }
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-  init(frame: CGRect, windows: [DesktopWindow], screenOrigin: CGPoint, primaryTop: CGFloat) {
+  init(frame: CGRect, windows: [DesktopWindow], screenOrigin: CGPoint, primaryTop: CGFloat,
+    elementMode: Bool = false, regionMode: Bool = false) {
+    self.elementMode = elementMode
+    self.regionMode = regionMode
     self.windows = windows
     self.screenOrigin = screenOrigin
     self.primaryTop = primaryTop
@@ -217,8 +245,34 @@ private final class WindowPickingView: NSView {
     hovered = hitWindow(event)
     needsDisplay = true
   }
+  private func screenPoint(_ event: NSEvent) -> CGPoint {
+    let local = convert(event.locationInWindow, from: nil)
+    return CGPoint(x: screenOrigin.x + local.x, y: screenOrigin.y + local.y)
+  }
   override func mouseDown(with event: NSEvent) {
-    if let selected = hitWindow(event) { choose?(selected) }
+    guard let selected = hitWindow(event) else { return }
+    let point = screenPoint(event)
+    if regionMode {
+      dragStart = point
+      dragWindow = selected
+    } else {
+      choose?(DesktopSelection(window: selected, point: point, region: nil))
+    }
+  }
+  override func mouseDragged(with event: NSEvent) {
+    guard let start = dragStart, let window = dragWindow else { return }
+    let end = screenPoint(event)
+    dragRect = DesktopSelection.clippedRegion(from: start, to: end, within: window.bounds)
+    needsDisplay = true
+  }
+  override func mouseUp(with event: NSEvent) {
+    guard regionMode, let start = dragStart, let window = dragWindow else { return }
+    mouseDragged(with: event)
+    if let rect = dragRect, rect.width >= 4, rect.height >= 4 {
+      choose?(DesktopSelection(window: window, point: start, region: rect))
+    } else {
+      dragStart = nil; dragWindow = nil; dragRect = nil; needsDisplay = true
+    }
   }
   override func rightMouseDown(with event: NSEvent) { choose?(nil) }
   override func keyDown(with event: NSEvent) {
@@ -232,7 +286,7 @@ private final class WindowPickingView: NSView {
     let dim = NSBezierPath(rect: bounds)
     var localRect: CGRect?
     if let selected {
-      let rect = selected.bounds.offsetBy(dx: -screenOrigin.x, dy: -screenOrigin.y).insetBy(
+      let rect = (dragRect ?? selected.bounds).offsetBy(dx: -screenOrigin.x, dy: -screenOrigin.y).insetBy(
         dx: 2, dy: 2)
       localRect = rect
       dim.append(NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9))
@@ -246,7 +300,9 @@ private final class WindowPickingView: NSView {
       NSColor.systemPurple.setStroke()
       outline.stroke()
     }
-    let text = selected.map { "第 1 步 · 选择「\($0.owner)」的窗口" } ?? "第 1 步 · 点击目标应用的窗口"
+    let text = regionMode ? "拖动框选截图区域 · 仅截取目标窗口"
+      : elementMode ? "点击目标应用中的原生控件"
+      : selected.map { "第 1 步 · 选择「\($0.owner)」的窗口" } ?? "第 1 步 · 点击目标应用的窗口"
     let attrs: [NSAttributedString.Key: Any] = [
       .font: NSFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: NSColor.white,
     ]
@@ -256,7 +312,9 @@ private final class WindowPickingView: NSView {
     NSColor(calibratedRed: 0.12, green: 0.08, blue: 0.20, alpha: 0.97).setFill()
     NSBezierPath(roundedRect: box, xRadius: 11, yRadius: 11).fill()
     (text as NSString).draw(at: CGPoint(x: box.minX + 16, y: box.minY + 10), withAttributes: attrs)
-    let subtitle = "选中后检测 HTML 接口 · \(remainingSeconds) 秒后自动退出"
+    let subtitle = elementMode
+      ? "\(regionMode ? "图像来源" : "辅助功能来源") · Esc / 右键取消 · \(remainingSeconds) 秒后退出"
+      : "选中后检测 HTML 接口 · \(remainingSeconds) 秒后自动退出"
     (subtitle as NSString).draw(
       at: CGPoint(x: box.minX + 16, y: box.minY + 36),
       withAttributes: [
