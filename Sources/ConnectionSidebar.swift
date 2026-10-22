@@ -55,6 +55,10 @@ struct ConnectionSidebar: View {
               ? "连接已断开，可以重新尝试连接。" : connector.message
           )
           .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
+          if store.selectedTarget?.needsReload == true {
+            Text("桥接在网页加载后接入。请在目标应用里重新加载一次网页，让已有的跨域 iframe 也就绪。")
+              .font(.system(size: 11)).foregroundStyle(.orange).lineSpacing(4)
+          }
           if connector.state == .needsRestart || (connector.state == .failed && app.supportsLaunch)
           {
             Button {
@@ -80,7 +84,7 @@ struct ConnectionSidebar: View {
             Button("断开连接") { Task { await connector.disconnect() } }.font(.system(size: 11))
               .disabled(
                 disabled)
-          } else if !connector.busy && connector.state != .unsupported {
+          } else if !connector.busy {
             Button("重新尝试连接") { Task { await connector.select(app) } }.font(.system(size: 11))
               .disabled(disabled)
           }
@@ -167,8 +171,8 @@ struct ConnectionSidebar: View {
           }
         }.padding(.top, 8)
       }.font(.system(size: 10)).foregroundStyle(.secondary)
-      Text("⌘⇧S 开始 / 暂停 · Esc 退出").font(.system(size: 9)).foregroundStyle(.secondary)
-      Text("LOCAL FIRST  /  v0.3.1").font(.system(size: 9, design: .monospaced)).foregroundStyle(
+      Text("⇧⌘Z 开始 / 暂停 · Esc 退出").font(.system(size: 9)).foregroundStyle(.secondary)
+      Text("LOCAL FIRST  /  v0.4.0").font(.system(size: 9, design: .monospaced)).foregroundStyle(
         .secondary)
     }.padding(16).background(Theme.panel.opacity(0.65))
       .onAppear { connector.refreshApplications() }

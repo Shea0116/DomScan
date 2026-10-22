@@ -315,6 +315,26 @@ final class ApplicationConnector: ObservableObject {
     if let pid = app.processID,
       NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL
         == app.bundleURL.standardizedFileURL,
+      let bridge = WebKitEndpoint.find(pid: pid, bundleURL: app.bundleURL) {
+      do {
+        try await capture.discoverWebKit(bridge)
+        state = .ready
+        message = "已找到 \(capture.targets.count) 个 WKWebView。"
+        let available = capture.targets.filter { !$0.isPlaceholder }
+        let matched = windowTitle.isEmpty ? nil : available.first { $0.title == windowTitle }
+        if let target = matched ?? (available.count == 1 ? available.first : nil) {
+          await capture.connect(target)
+          message = capture.connected ? "WKWebView 已接入，可以开始拾取。" : capture.error ?? "等待网页加载。"
+        }
+      } catch {
+        state = .failed
+        message = "WKWebView 桥接无法连接：\(error.localizedDescription) 请确认正在运行的是接入桥接后的 Debug 构建。"
+      }
+      return
+    }
+    if let pid = app.processID,
+      NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL
+        == app.bundleURL.standardizedFileURL,
       let endpoint = await findEndpoint(pid)
     {
       await attach(endpoint, preferredTitle: windowTitle)
@@ -325,7 +345,7 @@ final class ApplicationConnector: ObservableObject {
     } else {
       state = .unsupported
       message =
-        "已选中「\(app.name)」的窗口，但无法读取 HTML：未发现可接入的检查接口。窗口高亮不代表已连接；当前自动接入支持允许调试的 Electron / Chromium。"
+        "已选中「\(app.name)」的窗口，尚未发现 HTML 接口。Electron / Chromium 可开启调试入口；WKWebView 项目需要在 Debug 构建中接入 DomScanBridge，然后重新选择应用。仅开启 Safari 检查不足以连接 DomScan。"
       capture.status = "已选窗口，尚未接入 HTML · \(app.name)"
     }
   }

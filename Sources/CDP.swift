@@ -61,6 +61,7 @@ struct DebugTarget: Identifiable {
   let title: String
   let url: String
   let type: String
+  let needsReload: Bool
   var isPlaceholder: Bool { url.isEmpty || url == "about:blank" }
   init?(_ json: [String: Any]) {
     guard let id = json["id"] as? String, let type = json["type"] as? String,
@@ -68,6 +69,7 @@ struct DebugTarget: Identifiable {
     else { return nil }
     self.id = id
     self.type = type
+    needsReload = json["needsReload"] as? Bool ?? false
     title = json["title"] as? String ?? "未命名窗口"
     url = json["url"] as? String ?? ""
   }

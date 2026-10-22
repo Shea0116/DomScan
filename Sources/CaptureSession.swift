@@ -42,7 +42,10 @@ final class CaptureSession: ObservableObject {
   @Published var elements: [SelectedElement] = []
   @Published var focusedID: String?
   @Published var frameWarnings: [String] = []
+  @Published var shortcutWarning: String?
   let cdp = CDPConnection()
+  let webkit = WebKitConnection()
+  @Published private(set) var isWebKit = false
   private var scripts: [String: String] = [:]
   private var sessions = Set<String>()
   private var frames: [String: (parent: String?, url: String)] = [:]
@@ -57,8 +60,85 @@ final class CaptureSession: ObservableObject {
 
   init(source: String) { self.source = source }
 
+  func discoverWebKit(_ endpoint: WebKitEndpoint) async throws {
+    await disconnect()
+    isWebKit = true
+    error = nil
+    let expected = generation
+    webkit.onEvent = { [weak self] event in
+      guard let self, self.generation == expected else { return }
+      self.receiveWebKit(event)
+    }
+    webkit.onDisconnect = { [weak self] in
+      guard let self, self.generation == expected else { return }
+      self.connected = false; self.picking = false
+      self.heartbeat?.cancel(); self.targetWatch?.cancel()
+      for world in Array(self.worlds.values) { self.removeWorld(world) }
+      self.status = "WKWebView 连接已断开；已采集内容仍可导出"
+      self.onPickModeChanged?(false)
+    }
+    do {
+      try await webkit.open(endpoint)
+      try await updateWebKitTargets()
+      browserName = "WKWebView · DomScan Bridge"
+      status = targets.isEmpty ? "桥接已连接，等待 WKWebView 出现在应用窗口中" : "发现 \(targets.count) 个 WKWebView"
+      startTargetWatch()
+    } catch { await disconnect(); throw error }
+  }
+
+  private func updateWebKitTargets() async throws {
+    let result = try await webkit.request("list")
+    targets = (result["targets"] as? [[String: Any]] ?? []).compactMap(DebugTarget.init)
+    if let selectedTarget, let updated = targets.first(where: { $0.id == selectedTarget.id }) {
+      self.selectedTarget = updated
+    } else if selectedTarget != nil {
+      connected = false; picking = false
+      for world in Array(worlds.values) { removeWorld(world) }
+      selectedTarget = nil
+      onPickModeChanged?(false)
+    }
+  }
+
+  private func connectWebKit(_ target: DebugTarget) async {
+    busy = true
+    defer { busy = false }
+    _ = try? await webkit.request("detach")
+    for world in Array(worlds.values) { removeWorld(world) }
+    frames = [:]; picking = false; connected = false
+    selectedTarget = target
+    frameWarnings = ["WKWebView 使用真实 frame 标识；公开 API 不提供完整祖先 URL，导出路径仅含当前 frame。"]
+    error = nil
+    do {
+      _ = try await webkit.request("attach", ["target": target.id])
+      guard !worlds.isEmpty else {
+        throw SelectorError.message("桥接已连接，但页面尚未报告 DOM。请在目标应用中重新加载网页，再选择这个窗口。")
+      }
+      connected = true
+      startHeartbeat()
+      status = "已接入 WKWebView · 按 ⇧⌘Z 开始拾取"
+    } catch { self.error = error.localizedDescription; status = "等待 WKWebView 页面就绪" }
+  }
+
+  private func receiveWebKit(_ event: [String: Any]) {
+    if event["event"] as? String == "closed" {
+      connected = false; picking = false
+      for world in Array(worlds.values) { removeWorld(world) }
+      onPickModeChanged?(false)
+      return
+    }
+    guard event["event"] as? String == "frame", event["view"] as? String == selectedTarget?.id,
+      let frameID = event["frame"] as? String, let message = event["message"] as? [String: Any] else { return }
+    let world = ExecutionWorld(sessionID: "webkit", contextID: 0, uniqueID: frameID, frameID: frameID)
+    if message["kind"] as? String == "gone" { removeWorld(world); frames.removeValue(forKey: frameID); return }
+    worlds[world.id] = world
+    let url = event["url"] as? String ?? message["frameURL"] as? String ?? ""
+    frames[frameID] = (nil, url)
+    receive(message, world: world)
+  }
+
   func discover() async {
     guard !busy else { return }
+    if isWebKit { await disconnect() }
     busy = true
     error = nil
     defer { busy = false }
@@ -85,6 +165,7 @@ final class CaptureSession: ObservableObject {
 
   func connect(_ target: DebugTarget) async {
     guard !busy else { return }
+    if isWebKit { await connectWebKit(target); return }
     busy = true
     defer { busy = false }
     await disconnect()
@@ -126,7 +207,7 @@ final class CaptureSession: ObservableObject {
       try await setup(sessionID, generation: currentGeneration)
       startHeartbeat()
       startTargetWatch()
-      status = "已接入 · 按 ⌘⇧S 开始拾取"
+      status = "已接入 · 按 ⇧⌘Z 开始拾取"
     } catch {
       await disconnect()
       self.error = error.localizedDescription
@@ -142,6 +223,10 @@ final class CaptureSession: ObservableObject {
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         guard !Task.isCancelled, let self, self.endpoint == watchedEndpoint else { return }
         guard !self.busy else { continue }
+        if self.isWebKit {
+          try? await self.updateWebKitTargets()
+          continue
+        }
         do {
           let (data, response) = try await LocalEndpoint.fetch(
             "/json/list", base: LocalEndpoint.validate(watchedEndpoint), timeout: 2)
@@ -302,7 +387,7 @@ final class CaptureSession: ObservableObject {
         if self.picking {
           for world in Array(self.worlds.values) {
             guard !Task.isCancelled, self.picking else { break }
-            try? await self.evaluate("globalThis.__desktopSelector?.renewLease();", world: world)
+            try? await self.pickerCommand("renewLease", world: world)
           }
         }
       }
@@ -314,8 +399,7 @@ final class CaptureSession: ObservableObject {
     case "ready":
       Task { [weak self] in
         guard let self else { return }
-        try? await self.evaluate(
-          "globalThis.__desktopSelector?.setActive(\(self.picking));", world: world)
+        try? await self.pickerCommand("setActive", [self.picking], world: world)
       }
     case "stop": Task { await self.setPicking(false) }
     case "stale":
@@ -367,7 +451,7 @@ final class CaptureSession: ObservableObject {
     let revision = stateRevision
     for world in Array(worlds.values) {
       guard revision == stateRevision else { return }
-      try? await evaluate("globalThis.__desktopSelector?.setActive(\(value));", world: world)
+      try? await pickerCommand("setActive", [value], world: world)
     }
     if revision == stateRevision {
       status = value ? "正在拾取 · 点击选择 · Shift 多选 · Esc 恢复正常操作" : "拾取已暂停，原应用可正常操作"
@@ -376,6 +460,7 @@ final class CaptureSession: ObservableObject {
   }
 
   func activateTarget() async {
+    if isWebKit { return } // ApplicationConnector activates the owning macOS process.
     guard let selectedTarget else { return }
     _ = try? await cdp.request("Target.activateTarget", ["targetId": selectedTarget.id])
   }
@@ -385,8 +470,7 @@ final class CaptureSession: ObservableObject {
     for world in Array(worlds.values) {
       guard revision == selectionRevision else { return }
       let tokens = elements.filter { $0.world.id == world.id && !$0.stale }.map(\.token)
-      let json = Self.jsonString(tokens)
-      try? await evaluate("globalThis.__desktopSelector?.setSelected(\(json));", world: world)
+      try? await pickerCommand("setSelected", [tokens], world: world)
     }
   }
 
@@ -407,16 +491,13 @@ final class CaptureSession: ObservableObject {
   }
   func navigate(_ element: SelectedElement, direction: String) async {
     guard !element.stale else { return }
-    try? await evaluate(
-      "globalThis.__desktopSelector?.navigate(\(Self.jsonString(element.token)),\(Self.jsonString(direction)));",
-      world: element.world)
+    try? await pickerCommand("navigate", [element.token, direction], world: element.world)
   }
   func refresh() async {
     for world in Array(worlds.values) {
       let tokens = elements.filter { $0.world.id == world.id }.map(\.token)
       guard !tokens.isEmpty else { continue }
-      try? await evaluate(
-        "globalThis.__desktopSelector?.refresh(\(Self.jsonString(tokens)));", world: world)
+      try? await pickerCommand("refresh", [tokens], world: world)
     }
   }
   func evaluate(_ expression: String, world: ExecutionWorld) async throws {
@@ -428,6 +509,16 @@ final class CaptureSession: ObservableObject {
     if result["exceptionDetails"] != nil { throw SelectorError.message("这个 frame 的选择脚本执行失败。") }
   }
 
+  private func pickerCommand(_ command: String, _ args: [Any] = [], world: ExecutionWorld) async throws {
+    guard worlds[world.id] != nil else { throw SelectorError.message("页面已更新，请重新选择元素。") }
+    if isWebKit {
+      _ = try await webkit.request("command", ["frame": world.frameID, "command": command, "args": args])
+    } else {
+      let arguments = args.map { Self.jsonString($0) }.joined(separator: ",")
+      try await evaluate("globalThis.__desktopSelector?.\(command)(\(arguments));", world: world)
+    }
+  }
+
   func disconnect() async {
     targetWatch?.cancel()
     targetWatch = nil
@@ -436,8 +527,9 @@ final class CaptureSession: ObservableObject {
     picking = false
     stateRevision += 1
     onPickModeChanged?(false)
+    if isWebKit { _ = try? await webkit.request("detach") }
     for world in Array(worlds.values) {
-      try? await evaluate("globalThis.__desktopSelector?.destroy();", world: world)
+      if !isWebKit { try? await pickerCommand("destroy", world: world) }
     }
     for (session, id) in scripts {
       _ = try? await cdp.request(
@@ -450,6 +542,9 @@ final class CaptureSession: ObservableObject {
     cdp.onEvent = nil
     cdp.onDisconnect = nil
     cdp.close()
+    webkit.onEvent = nil; webkit.onDisconnect = nil
+    webkit.close()
+    isWebKit = false
     worlds = [:]
     sessions = []
     scripts = [:]

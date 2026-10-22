@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var item: NSStatusItem?
   private var hotKey: EventHotKeyRef?
   private var eventHandler: EventHandlerRef?
+  private var localHotKey: Any?
   private var terminating = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     menu.addItem(withTitle: "打开 DomScan", action: #selector(showWindow), keyEquivalent: "")
     menu.addItem(withTitle: "点选应用窗口…", action: #selector(pickWindow), keyEquivalent: "")
     menu.addItem(withTitle: "取消窗口选择", action: #selector(cancelWindowPicking), keyEquivalent: "")
-    menu.addItem(withTitle: "开始 / 暂停拾取  ⌘⇧S", action: #selector(togglePicking), keyEquivalent: "")
+    menu.addItem(withTitle: "开始 / 暂停拾取  ⇧⌘Z", action: #selector(togglePicking), keyEquivalent: "")
     menu.addItem(withTitle: "复制已选元素", action: #selector(copyElements), keyEquivalent: "")
     menu.addItem(.separator())
     menu.addItem(withTitle: "退出", action: #selector(quit), keyEquivalent: "q")
@@ -111,6 +112,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
   @objc func quit() { NSApp.terminate(nil) }
   private func installHotKey() {
+    // App-directed key events (including accessibility input) do not always pass
+    // through Carbon's global hotkey dispatch. Handle the same chord locally too.
+    localHotKey = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      if event.keyCode == UInt16(kVK_ANSI_Z),
+        event.modifierFlags.intersection([.command, .shift, .control, .option]) == [.command, .shift] {
+        self?.togglePicking()
+        return nil
+      }
+      return event
+    }
     let callback: EventHandlerUPP = { _, event, _ in
       guard let event else { return OSStatus(eventNotHandledErr) }
       var id = EventHotKeyID()
@@ -125,11 +136,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     var event = EventTypeSpec(
       eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-    InstallEventHandler(GetApplicationEventTarget(), callback, 1, &event, nil, &eventHandler)
+    let installed = InstallEventHandler(GetApplicationEventTarget(), callback, 1, &event, nil, &eventHandler)
+    guard installed == noErr else {
+      store.shortcutWarning = "无法安装全局快捷键（\(installed)），可使用开始拾取按钮。"
+      return
+    }
     let result = RegisterEventHotKey(
-      UInt32(kVK_ANSI_S), UInt32(cmdKey | shiftKey), EventHotKeyID(signature: 0x4453_4C43, id: 1),
+      UInt32(kVK_ANSI_Z), UInt32(cmdKey | shiftKey), EventHotKeyID(signature: 0x4453_4C43, id: 1),
       GetApplicationEventTarget(), 0, &hotKey)
-    if result != noErr { store.status = "全局快捷键被占用，可使用菜单栏开始拾取" }
+    if result != noErr { store.shortcutWarning = "⇧⌘Z 被占用（\(result)），可使用开始拾取按钮或菜单栏。" }
   }
 }
 
@@ -182,6 +197,9 @@ struct MainView: View {
   var body: some View {
     VStack(spacing: 0) {
       header
+      if let warning = store.shortcutWarning {
+        Text(warning).font(.system(size: 11)).foregroundStyle(.orange).padding(8)
+      }
       Divider().opacity(0.5)
       HStack(spacing: 0) {
         sidebar.frame(width: 255)
@@ -228,7 +246,7 @@ struct MainView: View {
         .padding(.horizontal, 8).padding(.vertical, 5)
       }.buttonStyle(.borderedProminent).disabled(!store.connected || store.busy || connector.busy)
         .help(
-          "⌘⇧S · 全局开始或暂停")
+          "⇧⌘Z · 全局开始或暂停")
     }.padding(.horizontal, 25).padding(.vertical, 17).background(Theme.panel)
   }
   private var sidebar: some View {
@@ -248,7 +266,7 @@ struct MainView: View {
             .system(size: 38, weight: .ultraLight)
           ).foregroundStyle(Theme.accent.opacity(0.6))
           Text("从一个真实元素开始").font(.system(size: 13, weight: .medium))
-          Text("点选屏幕窗口，或从左侧选择应用\n连接后按 ⌘⇧S 拾取元素").font(.system(size: 11)).foregroundStyle(.secondary)
+          Text("点选屏幕窗口，或从左侧选择应用\n连接后按 ⇧⌘Z 拾取元素").font(.system(size: 11)).foregroundStyle(.secondary)
             .multilineTextAlignment(.center).lineSpacing(5)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
@@ -348,9 +366,9 @@ struct MainView: View {
         }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       } else if connector.state == .ready && !store.connected {
         VStack(alignment: .leading, spacing: 18) {
-          Label("选择前端窗口", systemImage: "macwindow")
+          Label(store.isWebKit && store.error != nil ? "等待 WKWebView 页面" : "选择前端窗口", systemImage: "macwindow")
             .font(.system(size: 23, weight: .medium)).foregroundStyle(Theme.accent)
-          Text("应用包含多个前端窗口。请从左侧“选择前端窗口”中选择需要检查的界面。")
+          Text(store.isWebKit && store.error != nil ? store.error! : "请从左侧“选择前端窗口”中选择需要检查的界面。")
             .font(.system(size: 13)).lineSpacing(6)
           Text("窗口列表会自动更新。")
             .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -362,6 +380,11 @@ struct MainView: View {
           Text(connector.message).font(.system(size: 13)).lineSpacing(6).textSelection(.enabled)
           Text("请点选其他应用窗口，或从左侧选择应用。")
             .font(.system(size: 12)).foregroundStyle(.secondary)
+          Button("WKWebView / Flutter 接入说明") {
+            if let url = Bundle.main.url(forResource: "WKWebView", withExtension: "md") {
+              NSWorkspace.shared.open(url)
+            }
+          }
         }.padding(30).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       } else {
         emptyInspector

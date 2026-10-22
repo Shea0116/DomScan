@@ -1,0 +1,34 @@
+DomScan 0.4.0 — 2026-10-22
+Environment: macOS 26, Apple Silicon; Swift 6.3.3 compiler in Swift 5 mode.
+
+PASS: Swift Package Debug and Release builds.
+PASS: native DomScan app build and ad-hoc signature.
+PASS: 22 real WKWebView checks using scripts/test-webkit.sh work/webkit-final observe-sandbox.
+  Window-tree discovery of an already loaded WKWebView; reload covers its child frames.
+  Private manifest discovery by PID; invalid credentials rejected.
+  Same-origin, cross-origin, nested and dynamically added frames.
+  Isolated WKContentWorld; application page cannot access bridge globals.
+  Real selectors, HTML, computed CSS, geometry, Shadow DOM and exports.
+  Click suppression during picking; child-frame Escape restores main-frame clicks.
+  Parent navigation, refresh, removed-frame invalidation and document navigation.
+  Abrupt socket close releases input; reconnect without application reload.
+  Multiple WKWebViews sharing a userContentController remain independent.
+
+PASS: actual DomScan UI connects to a separate, sandboxed WKFixture process
+  without entering a port, and reports four execution frames.
+PASS: native UI input Shift+Command+Z changes state to active picking;
+  the global Carbon shortcut also registers without a conflict warning.
+PASS: real mouse click captures <button>, its selector, HTML, CSS and bounds,
+  while the test page's application counter remains unchanged.
+PASS: native Escape in the target WKWebView ends picking in DomScan.
+
+PASS: existing Chromium regression via scripts/test-renamed-engine.sh:
+  seven engine-entry checks, nineteen CDP integration checks,
+  four independent inspection-instance checks.
+
+Scope: fixtures only. The user's WikiTide source has not been modified or
+  validated with the bridge yet. Its Debug Runner must integrate the package
+  as described in Docs/WKWebView.md before DomScan can connect.
+Limits: public WebKit APIs do not expose the complete ancestor frame tree.
+  WK framePath contains only the current frame URL. Automatic late attachment
+  requires one page reload for existing cross-origin frames.

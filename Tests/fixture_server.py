@@ -4,7 +4,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import threading
 import sys
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9471
+PORT = int(sys.argv[1]) if __name__ == '__main__' and len(sys.argv) > 1 else 9471
 CROSS_PORT = PORT + 1
 STYLE = """<style>
 *{box-sizing:border-box}body{font:15px -apple-system,BlinkMacSystemFont,sans-serif;background:#101624;color:#e9edf5;margin:0;padding:28px}h1{font-size:27px;font-weight:600}p{color:#9baac0;line-height:1.6}button{background:#a78bfa;color:#171125;border:0;border-radius:8px;padding:12px 18px;font-size:14px;cursor:pointer}input{background:#202a3a;color:white;border:1px solid #39475c;border-radius:7px;padding:11px;margin:10px}iframe{display:block;border:1px solid #33425a;border-radius:10px;width:100%;height:200px;margin-top:18px}section{background:#192234;padding:18px;border-radius:12px;margin-bottom:16px}small{color:#6ee7b7}#counter{padding:10px;color:#6ee7b7}
