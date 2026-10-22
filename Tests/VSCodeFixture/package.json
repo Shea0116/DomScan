@@ -1,0 +1,9 @@
+{
+  "name": "desktop-selector-fixture",
+  "publisher": "local-test",
+  "displayName": "DomScan Fixture",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.cjs"
+}

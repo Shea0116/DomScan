@@ -1,0 +1,20 @@
+PASS non-loopback and credential endpoints rejected
+PASS connected to real Chromium debug target
+PASS same-origin, cross-site and nested frames attached and ready
+PASS cross-site iframe uses a separate OOPIF session
+PASS stable DOM selector captured
+PASS computed CSS captured
+PASS trusted pointerdown does not trigger target action while picking
+PASS picking suppresses the selected button action
+PASS nested frame identity retained
+PASS open Shadow DOM locator retained
+PASS Markdown includes instruction, iframe origin and CSS
+PASS JSON export is valid and versioned
+PASS new iframe automatically attached while picking
+PASS normal click restored after Escape
+PASS typing in the target app restored after Escape
+PASS detached-frame captures retained and marked stale
+PASS page releases input after native heartbeat loss
+PASS disconnect closes all frame sessions
+PASS captured frame paths preserved after disconnect
+ALL INTEGRATION CHECKS PASSED

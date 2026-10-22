@@ -1,0 +1,11 @@
+PASS Electron engine detected without an application-name allowlist
+PASS visible target window enumerated without screenshot capture
+PASS closed debug interface shown as needing restart; no manual port requested
+PASS test host restarted gracefully
+PASS restart automatically connects to the selected desktop app [连接就绪，可以开始拾取。; targets=1]
+PASS original isolated profile preserved across restart
+PASS original development entry preserved across restart
+PASS connection uses an automatically assigned local port
+PASS already-running app reconnected by PID with no address entry or restart
+AUTOMATIC_ENDPOINT http://127.0.0.1:65031
+ALL VISUAL ENTRY CHECKS PASSED

@@ -1,0 +1,32 @@
+Desktop Selector v0.2.1 window picker regression
+Date: 2026-10-21
+Host: Apple Silicon, macOS 26
+
+Compiled lifecycle test, exit status 0:
+PASS picker owns a key window and first responder
+PASS global Escape registration
+PASS picker timeout cancels without user input
+PASS timeout removes every input-blocking panel
+PASS picker can be opened again after cleanup
+PASS explicit cancellation is idempotent
+PASS focus-loss notification removes the overlay
+ALL PICKER LIFECYCLE CHECKS PASSED
+
+CUA checks on final app build:
+PASS selecting a window opens the stage-1 panel and exposes a native cancel button
+PASS Escape sent to picker closes panel and shows cancellation status in main window
+PASS clicking native cancel button closes panel and restores main window
+PASS a single coordinate click inside highlighted ChatGPT window selects it and removes panel
+PASS unsupported target reports "尚未接入 HTML" prominently, zero frames, picking disabled
+PASS application list labels detected engines as Chromium rather than implying HTML is connected
+
+Earlier UI check on same timeout implementation:
+PASS 30-second countdown exits the picker without input
+
+Scope:
+- Lifecycle test sends a focus-loss notification; it does not simulate a physical application switch.
+- Carbon Escape hotkey registration succeeded. CUA keys sent directly to a different process did
+  not produce a global hotkey event, so physical cross-application Escape is not claimed as verified.
+- No new HTML connection to ChatGPT was established. It has no detected supported inspection endpoint.
+- DOM/iframe engine was not changed in this patch; prior v0.2 logs are historical, not a rerun.
+- Multiple displays and third-party hotkey conflicts were not exercised in this regression.

@@ -1,0 +1,51 @@
+Desktop Selector v0.3.0 (build 5) validation
+Date: 2026-10-21
+Host: macOS 26, Apple Silicon
+Target: ChatGPT 26.1016.51333 / custom-branded Chromium 155.0.8059.80
+
+PASS generic resource fingerprint accepts renamed engines and rejects partial matches
+PASS blank startup pages excluded from automatic connection
+PASS renamed Chromium framework detected by resource layout
+PASS isolated desktop instance discovered by owning PID without entering a port
+PASS selected desktop window matched to HTML target
+PASS real HTML and iframe execution contexts ready
+PASS target list and selected window title refresh after startup/navigation
+ALL RENAMED ENGINE ENTRY CHECKS PASSED
+
+PASS non-loopback and credential endpoints rejected
+PASS connected to real Chromium debug target
+PASS same-origin, cross-site and nested frames attached and ready
+PASS cross-site iframe uses a separate OOPIF session
+PASS stable DOM selector captured
+PASS computed CSS captured
+PASS trusted pointerdown does not trigger target action while picking
+PASS picking suppresses the selected button action
+PASS nested frame identity retained
+PASS open Shadow DOM locator retained
+PASS Markdown includes instruction, iframe origin and CSS
+PASS JSON export is valid and versioned
+PASS new iframe automatically attached while picking
+PASS normal click restored after Escape
+PASS typing in the target app restored after Escape
+PASS detached-frame captures retained and marked stale
+PASS page releases input after native heartbeat loss
+PASS disconnect closes all frame sessions
+PASS captured frame paths preserved after disconnect
+ALL INTEGRATION CHECKS PASSED
+
+PASS independent inspection instance opens without closing original app
+PASS separate webpage profile and loopback debugging arguments applied
+PASS new instance exposes real HTML targets without manual port entry
+PASS repeated request reuses existing inspection instance
+ALL INDEPENDENT LAUNCH CHECKS PASSED
+
+Native UI observations on v0.3 development build:
+PASS application recognized as Chromium instead of unsupported
+PASS clicking Open Inspection Instance starts a separate instance and reaches connected state
+PASS actual app home element shows HTML, computed CSS and geometry in the selector
+
+Limits: daily app was not restarted; this does not prove restart with the default profile is allowed.
+Automated fixtures use temporary webpage profiles and local test pages.
+The final metadata-refresh and startup-wait changes were verified by integration tests.
+WKWebView, closed inspection interfaces and native controls are not implemented.
+Prior picker-validation.txt and v0.2 logs retain their original scope and date.

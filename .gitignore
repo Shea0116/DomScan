@@ -1,0 +1,14 @@
+.DS_Store
+*.app/
+*.zip
+*.dmg
+.build/
+build/
+dist/
+work/
+__pycache__/
+*.pyc
+Tests/.electron-test-profile/
+*.log
+capture.json
+capture.md
